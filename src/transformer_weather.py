@@ -60,6 +60,12 @@ n = len(data)
 train_df = data[0:int(n*0.7)]
 val_df = data[int(n*0.7):int(n*0.9)]
 test_df = data[int(n*0.9):]
+train_mean = train_df.mean()
+train_std = train_df.std()
+
+train_df = (train_df - train_mean) / train_std
+val_df = (val_df - train_mean) / train_std
+test_df = (test_df - train_mean) / train_std
 
 #Move data to sets
 data_features = train_df.copy()
@@ -70,9 +76,14 @@ data_features = np.array(train_df)
 def chunk(data, target, seq_len, pred_len):  # slices 1d array of data points/labels into multiple windows
     buffer_data = []
     buffer_target = []
-    for i in range(len(data) // seq_len - 1):
-        buffer_data.append(data[0 + i * seq_len:(i + 1) * seq_len])
-        buffer_target.append(target[(i + 1) * seq_len:(i + 1) * seq_len + pred_len])
+    # jumping window
+    # for i in range(len(data) // seq_len - 1):
+    #     buffer_data.append(data[0 + i * seq_len:(i + 1) * seq_len])
+    #     buffer_target.append(target[(i + 1) * seq_len:(i + 1) * seq_len + pred_len])
+    #sliding window
+    for i in range(len(data)-(seq_len+pred_len)):
+        buffer_data.append(data[i:i+seq_len])
+        buffer_target.append(target[i+seq_len:i+seq_len+pred_len])
     return tf.convert_to_tensor(np.array(buffer_data)), tf.convert_to_tensor(np.array(buffer_target))
 
 
@@ -173,11 +184,11 @@ EPOCHS = 20
 # more generic shapes.
 
 train_step_signature = [
-    tf.TensorSpec(shape=(None, None, None), dtype=tf.int64),
-    tf.TensorSpec(shape=(None, None), dtype=tf.int64),
+    tf.TensorSpec(shape=(None, None, 19), dtype=tf.float64),
+    tf.TensorSpec(shape=(None, None), dtype=tf.float64),
 ]
 
-# @tf.function(input_signature=train_step_signature)
+@tf.function(input_signature=train_step_signature)
 def train_step(inp, tar):
     tar_inp = tar[:, :-1] #remove last element, meant for prediction
     tar_real = tar[:, 1:] #remove first element, redudant var cuz no [start] token
@@ -202,29 +213,29 @@ def train_step(inp, tar):
     #train_MAE(tar_real,predictions)
 
 
-# for epoch in range(EPOCHS):
-#     start = time.time()
-#
-#     train_loss.reset_states()
-#     train_accuracy.reset_states()
-#     train_diff.reset_states() #avg diff between pred and real value
-#     #train_MAE.reset_states()
-#
-#     # inp -> portuguese, tar -> english
-#     for (batch, (inp, tar)) in enumerate(train_batches):
-#         train_step(inp, tar)
-#         #print("Batch " + str(batch) + " complete")
-#         if batch % 50 == 0:
-#             print(f'Epoch {epoch + 1} Batch {batch} Loss {train_loss.result():.4f} Accuracy {train_accuracy.result():.4f} '
-#                   f'Avg_diff {train_diff.result():.4f}')
-#
-#     if (epoch + 1) % 5 == 0:
-#         ckpt_save_path = ckpt_manager.save()
-#         print(f'Saving checkpoint for epoch {epoch+1} at {ckpt_save_path}')
-#
-#     print(f'Epoch {epoch + 1} Loss {train_loss.result():.4f} Accuracy {train_accuracy.result():.4f} Avg_diff {train_diff.result():.4f}')
-#
-#     print(f'Time taken for 1 epoch: {time.time() - start:.2f} secs\n')
+for epoch in range(EPOCHS):
+    start = time.time()
+
+    train_loss.reset_states()
+    train_accuracy.reset_states()
+    train_diff.reset_states() #avg diff between pred and real value
+    #train_MAE.reset_states()
+
+    # inp -> portuguese, tar -> english
+    for (batch, (inp, tar)) in enumerate(train_batches):
+        train_step(inp, tar)
+        #print("Batch " + str(batch) + " complete")
+        if batch % 50 == 0:
+            print(f'Epoch {epoch + 1} Batch {batch} Loss {train_loss.result():.4f} Accuracy {train_accuracy.result():.4f} '
+                  f'Avg_diff {train_diff.result():.4f}')
+
+    if (epoch + 1) % 5 == 0:
+        ckpt_save_path = ckpt_manager.save()
+        print(f'Saving checkpoint for epoch {epoch+1} at {ckpt_save_path}')
+
+    print(f'Epoch {epoch + 1} Loss {train_loss.result():.4f} Accuracy {train_accuracy.result():.4f} Avg_diff {train_diff.result():.4f}')
+
+    print(f'Time taken for 1 epoch: {time.time() - start:.2f} secs\n')
 
 def evaluate(weather,target): #inp should be (1,10,19) #maybe make (1,11,19) take last entry out into output
     encoder_input = weather

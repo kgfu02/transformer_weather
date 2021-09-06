@@ -283,7 +283,8 @@ class Transformer(tf.keras.Model):
 
         self.decoder = Decoder(num_layers, d_model, num_heads, dff,
                                pe_target, rate)
-
+        self.a_layer = tf.keras.layers.Dense(64,activation='relu')
+        self.b_layer = tf.keras.layers.Dense(64,activation='relu')
         self.final_layer = tf.keras.layers.Dense(1)
 
     def call(self, inp, tar, training, enc_padding_mask,
@@ -300,6 +301,8 @@ class Transformer(tf.keras.Model):
         dec_output, attention_weights = self.decoder.call(
             tar, enc_output, training, look_ahead_mask, dec_padding_mask)
 
+        #dec_output = self.a_layer(dec_output)
+        dec_output = self.b_layer(dec_output)
         final_output = self.final_layer(dec_output)
 
         return final_output, attention_weights
