@@ -142,7 +142,7 @@ def point_wise_feed_forward_network(d_model, dff):
     ])
 
 class EncoderLayer(tf.keras.layers.Layer):
-    def __init__(self, d_model, num_heads, dff, rate=0.1):
+    def __init__(self, d_model, num_heads, dff, rate=0.05):
         super(EncoderLayer, self).__init__()
 
         self.mha = MultiHeadAttention(d_model, num_heads)
@@ -167,7 +167,7 @@ class EncoderLayer(tf.keras.layers.Layer):
         return out2
 
 class DecoderLayer(tf.keras.layers.Layer):
-    def __init__(self, d_model, num_heads, dff, rate=0.1):
+    def __init__(self, d_model, num_heads, dff, rate=0.05):
         super(DecoderLayer, self).__init__()
 
         self.mha1 = MultiHeadAttention(d_model, num_heads)
@@ -204,7 +204,7 @@ class DecoderLayer(tf.keras.layers.Layer):
 
 class Encoder(tf.keras.layers.Layer):
     def __init__(self, num_layers, d_model, num_heads, dff,
-                 maximum_position_encoding, rate=0.1):
+                 maximum_position_encoding, rate=0.05):
         super(Encoder, self).__init__()
 
         self.d_model = d_model
@@ -236,7 +236,7 @@ class Encoder(tf.keras.layers.Layer):
 
 class Decoder(tf.keras.layers.Layer):
     def __init__(self, num_layers, d_model, num_heads, dff,
-                 maximum_position_encoding, rate=0.1):
+                 maximum_position_encoding, rate=0.05):
         super(Decoder, self).__init__()
 
         self.d_model = d_model
@@ -275,7 +275,7 @@ class Decoder(tf.keras.layers.Layer):
 
 class Transformer(tf.keras.Model):
     def __init__(self, num_layers, d_model, num_heads, dff,  pe_input,
-                    pe_target, rate=0.1):
+                    pe_target, rate=0.05):
         super(Transformer, self).__init__()
 
         self.tokenizer = Encoder(num_layers, d_model, num_heads, dff,
