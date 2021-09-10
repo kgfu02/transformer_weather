@@ -57,9 +57,9 @@ data['Year cos'] = np.cos(timestamp_s * (2 * np.pi / year))
 # Split data
 
 n = len(data)
-train_df = data[0:int(n * 0.7)]
-val_df = data[int(n * 0.7):int(n * 0.9)]
-test_df = data[int(n * 0.9):]
+train_df = data[0:int(n*0.7)]
+val_df = data[int(n*0.7):int(n*0.9)]
+test_df = data[int(n*0.9):]
 train_mean = train_df.mean()
 train_std = train_df.std()
 
@@ -67,7 +67,7 @@ train_df = (train_df - train_mean) / train_std
 val_df = (val_df - train_mean) / train_std
 test_df = (test_df - train_mean) / train_std
 
-# Move data to sets
+#Move data to sets
 data_features = train_df.copy()
 data_labels = np.array(data_features.pop('T (degC)'))  # remove temperature column and return data to data_labels
 data_features = np.array(train_df)
@@ -80,21 +80,18 @@ def chunk(data, target, seq_len, pred_len):  # slices 1d array of data points/la
     # for i in range(len(data) // seq_len - 1):
     #     buffer_data.append(data[0 + i * seq_len:(i + 1) * seq_len])
     #     buffer_target.append(target[(i + 1) * seq_len:(i + 1) * seq_len + pred_len])
-    # sliding window
-    for i in range(len(data) - (seq_len + pred_len)):
-        buffer_data.append(data[i:i + seq_len])
-        buffer_target.append(target[i + seq_len:i + seq_len + pred_len])
+    #sliding window
+    for i in range(len(data)-(seq_len+pred_len)):
+        buffer_data.append(data[i:i+seq_len])
+        buffer_target.append(target[i+seq_len:i+seq_len+pred_len])
     return tf.convert_to_tensor(np.array(buffer_data)), tf.convert_to_tensor(np.array(buffer_target))
 
 
 # data_features, data_labels = chunk(data_features,data_labels,10,5)
-dataset = tf.data.Dataset.from_tensor_slices(
-    chunk(data_features, data_labels, 24, 1))  # <-change desired input and output len
 
-data_features = val_df.copy()
-data_labels = np.array(data_features.pop('T (degC)'))  # remove temperature column and return data to data_labels
-data_features = np.array(val_df)
-val_dataset = tf.data.Dataset.from_tensor_slices(chunk(data_features, data_labels, 24, 1))
+dataset = tf.data.Dataset.from_tensor_slices(chunk(data_features, data_labels, 24, 1)) #<-change desired input and output len
+print(dataset)
+
 
 BUFFER_SIZE = 20000
 BATCH_SIZE = 32
@@ -109,13 +106,12 @@ def make_batches(ds):
 
 
 train_batches = make_batches(dataset)
-val_batches = make_batches(val_dataset)
 print(train_batches)
-num_layers = 2
-d_model = 64
-dff = 256 #depth of feed forward
-num_heads = 4
-dropout_rate = 0.1
+num_layers = 4
+d_model = 128
+dff = 512
+num_heads = 8
+dropout_rate = 0.2
 
 class CustomSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
     def __init__(self, d_model, warmup_steps=4000):
@@ -129,8 +125,24 @@ class CustomSchedule(tf.keras.optimizers.schedules.LearningRateSchedule):
     def __call__(self, step):
         arg1 = tf.math.rsqrt(step)
         arg2 = step * (self.warmup_steps ** -1.5)
+
         return tf.math.rsqrt(self.d_model) * tf.math.minimum(arg1, arg2)
 
+class Transformer(tf.keras.Model):
+    def __init__(self, num_layers, d_model, num_heads, dff,  pe_input,
+                 pe_target, rate=0.1):
+        super(Transformer, self).__init__()
+
+        self.final_layer = tf.keras.layers.Dense(1)
+
+    def call(self, inp, tar, training, enc_padding_mask,
+             look_ahead_mask, dec_padding_mask):
+        #Add last input temperature element to start of tar if training; remove from inp -Kevin
+        #if not training last input should already be added
+        if training:
+            tar = tf.concat([inp[:,-1,1,np.newaxis],tar],axis=1)
+            inp = inp[:,:-1,:]
+        return tar[:,0,np.newaxis,np.newaxis]
 
 learning_rate = CustomSchedule(d_model)
 
@@ -142,8 +154,7 @@ train_loss = tf.keras.metrics.Mean(name='train_loss')
 train_accuracy = tf.keras.metrics.Mean(name='train_accuracy')
 train_diff = tf.keras.metrics.Mean(name='train_diff')
 train_MAE = tf.keras.metrics.MeanAbsoluteError()
-val_diff = tf.keras.metrics.Mean(name='val_diff')
-transformer = trans.Transformer(
+transformer = Transformer(
     num_layers=num_layers,
     d_model=d_model,
     num_heads=num_heads,
@@ -151,6 +162,24 @@ transformer = trans.Transformer(
     pe_input=1000,
     pe_target=1000,
     rate=dropout_rate)
+
+# for input_example, target_example in dataset.take(1): #32,10,19 -> 32,5
+#     input_example = input_example[np.newaxis,:]
+#     input = tf.keras.Input(input_example.get_shape().as_list()[1],1) #should have shape (10,1) but works out to (1,10)???
+#     output = tf.keras.Input(1,1)
+#
+#     enc_padding_mask, combined_mask, dec_padding_mask = trans.create_masks(
+#         input, output)
+#
+#     # predictions.shape == (batch_size, seq_len, vocab_size)
+#     predictions, attention_weights = transformer.call(input_example,
+#                                                  output,
+#                                                  False,
+#                                                  enc_padding_mask,
+#                                                  combined_mask,
+#                                                  dec_padding_mask)
+
+
 
 checkpoint_path = "./checkpoints_weather/train"
 
@@ -163,24 +192,78 @@ ckpt_manager = tf.train.CheckpointManager(ckpt, checkpoint_path, max_to_keep=5)
 if ckpt_manager.latest_checkpoint:
     ckpt.restore(ckpt_manager.latest_checkpoint)
     print('Latest checkpoint restored!!')
-EPOCHS = 60
+EPOCHS = 20
 # The @tf.function trace-compiles train_step into a TF graph for faster
 # execution. The function specializes to the precise shape of the argument
 # tensors. To avoid re-tracing due to the variable sequence lengths or variable
 # batch sizes (the last batch is smaller), use input_signature to specify
 # more generic shapes.
 
-def evaluate(weather, target):  # inp should be (1,10,19) #maybe make (1,11,19) take last entry out into output
+train_step_signature = [
+    tf.TensorSpec(shape=(None, None, 19), dtype=tf.float64),
+    tf.TensorSpec(shape=(None, None), dtype=tf.float64),
+]
+
+#@tf.function(input_signature=train_step_signature)
+def train_step(inp, tar):
+    tar_inp = tar[:, :-1] #remove last element, meant for prediction
+    tar_real = tar[:, 1:] #remove first element, redudant var cuz no [start] token
+
+    enc_padding_mask, combined_mask, dec_padding_mask = trans.create_masks(inp[:,:-1,1], tar)
+
+    with tf.GradientTape() as tape:
+        predictions = transformer.call(inp, tar_inp,
+                                     True,
+                                     enc_padding_mask,
+                                     combined_mask,
+                                     dec_padding_mask)
+        loss = trans.loss_function(tar, predictions)
+        diff = trans.diff_function(tar, predictions)
+
+    gradients = tape.gradient(loss, transformer.trainable_variables)
+    optimizer.apply_gradients(zip(gradients, transformer.trainable_variables))
+
+    train_loss(loss)
+    #train_accuracy(trans.accuracy_function(tar_real, predictions))
+    train_diff(diff)
+    #train_MAE(tar_real,predictions)
+
+
+for epoch in range(EPOCHS):
+    start = time.time()
+
+    train_loss.reset_states()
+    train_accuracy.reset_states()
+    train_diff.reset_states() #avg diff between pred and real value
+    #train_MAE.reset_states()
+
+    # inp -> portuguese, tar -> english
+    for (batch, (inp, tar)) in enumerate(train_batches):
+        train_step(inp, tar)
+        #print("Batch " + str(batch) + " complete")
+        if batch % 50 == 0:
+            print(f'Epoch {epoch + 1} Batch {batch} Loss {train_loss.result():.4f} Accuracy {train_accuracy.result():.4f} '
+                  f'Avg_diff {train_diff.result():.4f}')
+
+    if (epoch + 1) % 5 == 0:
+        ckpt_save_path = ckpt_manager.save()
+        print(f'Saving checkpoint for epoch {epoch+1} at {ckpt_save_path}')
+
+    print(f'Epoch {epoch + 1} Loss {train_loss.result():.4f} Accuracy {train_accuracy.result():.4f} Avg_diff {train_diff.result():.4f}')
+
+    print(f'Time taken for 1 epoch: {time.time() - start:.2f} secs\n')
+
+def evaluate(weather,target): #inp should be (1,10,19) #maybe make (1,11,19) take last entry out into output
     encoder_input = weather
-    output = encoder_input[:, -1, 1, np.newaxis]  # temperature of last input
-    encoder_input = encoder_input[:, :-1, :]  # remove last inp from encoder_input
+    output = encoder_input[:,-1,1,np.newaxis] #temperature of last input
+    encoder_input = encoder_input[:,:-1,:] #remove last inp from encoder_input
     pred_length = tf.shape(target)[1]
     for i in range(pred_length):
         enc_padding_mask, combined_mask, dec_padding_mask = trans.create_masks(
-            encoder_input[:, :, 0], output)
+            encoder_input[:,:,0], output)
 
         # predictions.shape == (batch_size, seq_len, vocab_size)
-        predictions, attention_weights = transformer(encoder_input,
+        predictions = transformer.call(encoder_input,
                                                      output,
                                                      False,
                                                      enc_padding_mask,
@@ -192,96 +275,27 @@ def evaluate(weather, target):  # inp should be (1,10,19) #maybe make (1,11,19) 
 
         # concatenate the predicted_id to the output which is given to the decoder
         # as its input.
-        output = tf.concat([output, tf.cast(predictions, dtype=tf.double)], axis=-1)
-    return output[:,1:], attention_weights
-
-train_step_signature = [
-    tf.TensorSpec(shape=(None, None, 19), dtype=tf.float64),
-    tf.TensorSpec(shape=(None, None), dtype=tf.float64),
-]
-@tf.function(input_signature=train_step_signature)
-def train_step(inp, tar):
-    tar_inp = tar[:, :-1]  # remove last element, meant for prediction
-    tar_real = tar[:, 1:]  # remove first element, redundant var cuz no [start] token
-
-    enc_padding_mask, combined_mask, dec_padding_mask = trans.create_masks(inp[:, :-1, 1], tar)
-
-    with tf.GradientTape() as tape:
-        predictions, _ = transformer.call(inp, tar_inp,
-                                          True,
-                                          enc_padding_mask,
-                                          combined_mask,
-                                          dec_padding_mask)
-        loss = trans.loss_function(tar, predictions)
-        diff = trans.diff_function(tar, predictions)
-
-    gradients = tape.gradient(loss, transformer.trainable_variables)
-    optimizer.apply_gradients(zip(gradients, transformer.trainable_variables))
-
-    train_loss(loss)
-    # train_accuracy(trans.accuracy_function(tar_real, predictions))
-    train_diff(diff)
-    # train_MAE(tar_real,predictions)
-
-
-for epoch in range(20):
-    start = time.time()
-
-    train_loss.reset_states()
-    train_accuracy.reset_states()
-    train_diff.reset_states()  # avg diff between pred and real value
-    val_diff.reset_states
-    # train_MAE.reset_states()
-
-    # inp -> portuguese, tar -> english
-    for (batch, (inp, tar)) in enumerate(train_batches):
-        train_step(inp, tar)
-        #print("Batch " + str(batch) + " complete")
-        if batch % 50 == 0:
-            print(f'Epoch {epoch + 1} Batch {batch} Loss {train_loss.result():.4f} '
-                  f'Avg_diff {train_diff.result():.4f}')
-
-    for (batch, (inp, tar)) in enumerate(val_batches):
-        pred,_ = evaluate(inp,tar)
-
-    if (epoch + 1) % 5 == 0:
-        ckpt_save_path = ckpt_manager.save()
-        print(f'Saving checkpoint for epoch {epoch + 1} at {ckpt_save_path}')
-    val_diff(trans.diff_function(tar,pred[:,:,np.newaxis]))
-    print(f'Epoch {epoch + 1} Loss {train_loss.result():.4f} Avg_diff {train_diff.result():.4f} Val_diff {val_diff.result():.4f}')
-
-    print(f'Time taken for 1 epoch: {time.time() - start:.2f} secs\n')
-
-def plot_attention_head(predicted,attention):
-    # The plot is of the attention when a token was generated.
-    in_tokens = tf.constant(range(1, tf.size(attention)))
-    ax = plt.gca()
-    ax.matshow(attention)
-    ax.set_xticks(range(len(in_tokens)))
-    ax.set_yticks(range(tf.shape(predicted)[0]))
-    plt.show()
+        output = tf.concat([output, tf.cast(predictions,dtype=tf.double)], axis=-1)
+    return output
 
 for input_example, target_example in dataset.take(1):
     input_example = tf.expand_dims(input_example, axis=0)
     target_example = tf.expand_dims(target_example, axis=0)
-    # train_step(input_example,target_example)
-    # print("Input Shape:", tf.shape(input_example))
-    # print("Input T deg(C) Values:", input_example[:, :, 1])
-    # print("Target Values T deg(C):", target_example)
-    # output Input Shape: tf.Tensor([ 1 10 19], shape=(3,), dtype=int32) Input T deg(C) Values: tf.Tensor([[-8.05
-    # -8.88 -8.81 -9.05 -9.63 -9.67 -9.17 -8.1  -7.66 -7.04]], shape=(1, 10), dtype=float64) Target Values T deg(C):
-    # tf.Tensor([[-7.41 -6.87 -5.89 -5.94 -5.69]], shape=(1, 5), dtype=float64)
-    predicted, attention_weights = evaluate(input_example, target_example)
-    # print("Predicted:", predicted)
-    # plt.plot(predicted[0, :])
-    # plt.plot(target_example[0, :])
-    # plt.ylabel("Temperature(C)")
-    # plt.show()
-    plt.plot(tf.concat([input_example[0, :, 1], predicted[0, :]], axis=0))
-    plt.plot(tf.concat([input_example[0, :, 1], target_example[0, :]], axis=0))
+    #train_step(input_example,target_example)
+    print("Input Shape:", tf.shape(input_example))
+    print("Input T deg(C) Values:", input_example[:,:,1])
+    print("Target Values T deg(C):", target_example)
+    #output
+#   Input Shape: tf.Tensor([ 1 10 19], shape=(3,), dtype=int32)
+#   Input T deg(C) Values: tf.Tensor([[-8.05 -8.88 -8.81 -9.05 -9.63 -9.67 -9.17 -8.1  -7.66 -7.04]], shape=(1, 10), dtype=float64)
+#   Target Values T deg(C): tf.Tensor([[-7.41 -6.87 -5.89 -5.94 -5.69]], shape=(1, 5), dtype=float64)
+    predicted = evaluate(input_example,target_example)
+    print("Predicted:",predicted)
+    plt.plot(predicted[0,:])
+    plt.plot(target_example[0,:])
+    plt.ylabel("Temperature(C)")
     plt.show()
-    #for i in range(8):
-        #plot_attention_head(predicted,tf.squeeze(attention_weights['decoder_layer4_block2'],0)[i])
-
-
+    plt.plot(tf.concat([input_example[0,:,1],predicted[0,1:]],axis=0))
+    plt.plot(tf.concat([input_example[0,:,1],target_example[0,:]],axis=0))
+    plt.show()
 
