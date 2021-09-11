@@ -8,4 +8,4 @@ Some notes:
 Performance:
 Models were given 24 inputs spaced over a 24hr period and predicted one timestep into the future. 
 Baseline model (outputs most recent input as prediction) has a .089 average difference between target and predicted value. 
-Transformer model has a average difference between target and predicted value.
+Transformer model has a .0596 average difference between target and predicted value for test dataset.
