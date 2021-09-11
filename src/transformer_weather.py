@@ -96,6 +96,11 @@ data_labels = np.array(data_features.pop('T (degC)'))  # remove temperature colu
 data_features = np.array(val_df)
 val_dataset = tf.data.Dataset.from_tensor_slices(chunk(data_features, data_labels, 24, 1))
 
+data_features = test_df.copy()
+data_labels = np.array(data_features.pop('T (degC)'))  # remove temperature column and return data to data_labels
+data_features = np.array(test_df)
+test_dataset = tf.data.Dataset.from_tensor_slices(chunk(data_features, data_labels, 24, 1))
+
 BUFFER_SIZE = 20000
 BATCH_SIZE = 32
 
@@ -110,6 +115,7 @@ def make_batches(ds):
 
 train_batches = make_batches(dataset)
 val_batches = make_batches(val_dataset)
+test_batches = make_batches(test_dataset)
 print(train_batches)
 num_layers = 2
 d_model = 64
@@ -163,7 +169,7 @@ ckpt_manager = tf.train.CheckpointManager(ckpt, checkpoint_path, max_to_keep=5)
 if ckpt_manager.latest_checkpoint:
     ckpt.restore(ckpt_manager.latest_checkpoint)
     print('Latest checkpoint restored!!')
-EPOCHS = 60
+
 # The @tf.function trace-compiles train_step into a TF graph for faster
 # execution. The function specializes to the precise shape of the argument
 # tensors. To avoid re-tracing due to the variable sequence lengths or variable
@@ -223,14 +229,14 @@ def train_step(inp, tar):
     train_diff(diff)
     # train_MAE(tar_real,predictions)
 
-
-for epoch in range(20):
+EPOCHS = 0
+for epoch in range(EPOCHS):
     start = time.time()
 
     train_loss.reset_states()
     train_accuracy.reset_states()
     train_diff.reset_states()  # avg diff between pred and real value
-    val_diff.reset_states
+    val_diff.reset_states()
     # train_MAE.reset_states()
 
     # inp -> portuguese, tar -> english
@@ -243,11 +249,12 @@ for epoch in range(20):
 
     for (batch, (inp, tar)) in enumerate(val_batches):
         pred,_ = evaluate(inp,tar)
+        val_diff(trans.diff_function(tar,pred[:,:,np.newaxis]))
 
     if (epoch + 1) % 5 == 0:
         ckpt_save_path = ckpt_manager.save()
         print(f'Saving checkpoint for epoch {epoch + 1} at {ckpt_save_path}')
-    val_diff(trans.diff_function(tar,pred[:,:,np.newaxis]))
+
     print(f'Epoch {epoch + 1} Loss {train_loss.result():.4f} Avg_diff {train_diff.result():.4f} Val_diff {val_diff.result():.4f}')
 
     print(f'Time taken for 1 epoch: {time.time() - start:.2f} secs\n')
@@ -283,5 +290,12 @@ for input_example, target_example in dataset.take(1):
     #for i in range(8):
         #plot_attention_head(predicted,tf.squeeze(attention_weights['decoder_layer4_block2'],0)[i])
 
+B  = '\033[34m' # blue
+test_diff = tf.keras.metrics.Mean(name='test_diff')
+for (batch, (inp, tar)) in enumerate(test_batches):
+    pred, _ = evaluate(inp,tar)
+    test_diff(trans.diff_function(tar,pred[:,:,np.newaxis]))
+print(B + f'Test Set average delta: {test_diff.result():.4f}' + B)
 
+# post 15 epochs
 
